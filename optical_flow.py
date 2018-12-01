@@ -59,11 +59,15 @@ red = (0, 0, 255)
 
 class App:
     def __init__(self, video_src, frame_offset):
+        ### Stream info ###
         self.cam = video.create_capture(video_src, presets['book'])
         self.video = os.path.basename(video_src).split('.')[0]
         self.fps = self.cam.get(cv.CAP_PROP_FPS)
+        ### Shared images and feature points ###
         self.p0 = None
-        self.use_ransac = True
+        self.vis = None
+        self.prev_gray = None
+        ### Custom counters and variables ###
         self.i = 0
         self.frame_counter = 0
         self.frame = []
@@ -88,134 +92,124 @@ class App:
         while True:
             if not self.pause:
                 _ret, self.frame = self.cam.read()
-            else:
-                ch = cv.waitKey(1)
-                if ch == ord(' '):
-                    self.pause = not self.pause
-                continue
             if _ret == False:
                 print("Exiting")
                 return
-            black = np.zeros((self.frame.shape[0], self.frame.shape[1], 3), np.uint8)
             frame_gray = cv.cvtColor(self.frame, cv.COLOR_BGR2GRAY)
-            ret, thresh = cv.threshold(frame_gray, 140, 255, cv.THRESH_BINARY)
-            _, contours, heirarchy = cv.findContours(thresh, cv.RETR_EXTERNAL, 
-                    cv.CHAIN_APPROX_NONE)
-            cv.drawContours(black, contours, -1, (255, 255, 255), thickness= -1)
-            #c = max(contours, key = cv.contourArea)
-            blur = cv.blur(black, (50, 50))
-
-            #plt.imshow(blur)
-            #plt.show()
-            vis = self.frame.copy()
-            if self.p0 is not None and self.i == self.frame_offset:
-                p2, trace_status = checkedTrace(self.gray1, frame_gray, self.p1)
-
+            self.create_color_mask(frame_gray)
+            self.vis = self.frame.copy()
+            if self.p0 is not None:# and self.i == self.frame_offset:
+                p2, trace_status = checkedTrace(self.prev_gray, frame_gray, self.p1)
                 self.p1 = p2[trace_status].copy()
                 self.p0 = self.p0[trace_status].copy()
-                self.gray1 = frame_gray
+                self.prev_gray = frame_gray
 
                 if len(self.p0) < 4:
                     self.p0 = None
                     continue
                 H, status = cv.findHomography(self.p0, self.p1,
                         cv.RANSAC, self.OUTLIER_THRESH)
-                h, w = self.frame.shape[:2]
                 #overlay = cv.warpPerspective(self.frame0, H, (w, h))
                 #vis = cv.addWeighted(vis, 0.5, overlay, 0.5, 0.0)
 
                 for (x0, y0), (x1, y1), good in zip(self.p0[:,0], self.p1[:,0], status[:,0]):
+                    dy = (y1 - y0)
+                    dx = (x1 - x0)
                     if good:
-                        dy = (y1 - y0)
-                        dx = (x1 - x0)
-                        inliers.append((dx, dy))
+                        if (dx**2 + dy**2) < 200:
+                            inliers.append(np.array([dx, dy]))
                         #cv.line(vis, (x0, y0), (x1, y1), (0, 128, 0))
                     if not good:
-                        dy = (y1 - y0)
-                        dx = (x1 - x0)
-                        outliers.append(np.array([x1, y1, dx, dy]))
+                        if (dx**2 + dy**2) < 200:
+                            outliers.append(np.array([x1, y1, dx, dy]))
                         #cv.circle(black, (x1, y1), 2, (red, green)[good], -1)
                         #cv.circle(vis, (x1, y1), 2, (red, green)[good], -1)
-                if True:#self.frame_counter % self.FRAME == 0:
-                    avg_dx = np.mean([pt[0] for pt in inliers])
-                    avg_dy = np.mean([pt[1] for pt in inliers])
-                    trimmed_outliers = []
-                    counter = 0
-                    for pt in outliers:
-                        x, y, dy, dx = pt
-                        x = int(x)
-                        y = int(y)
-                        if y >= blur.shape[0]:
-                            y = blur.shape[0] - 1
-                        if x >= blur.shape[1]:
-                            x = blur.shape[1] - 1
-                        # Checking to ensure each red point is within velocity threshold
-                        # and that each point when placed in the mask is bright (>150)
-                        if ((avg_dy - dy)**2 + (avg_dx - dx)**2) > self.VEL_THRESH\
-                            and sum(blur[y][x]) > self.BRIGHTNESS_THRESH:
-                            cv.circle(vis, (x, y), 2, red, -1)
-                            trimmed_outliers.append(pt)
-                            counter += 1
-                    print(len(outliers))
-                    print(counter)
-                    trimmed_outliers = np.array(trimmed_outliers)
-                    if len(trimmed_outliers) > 5:
-                        cluster_dict = defaultdict(list)
-                        # Creating clusters based on the trimmed outliers
-                        number, centers, labels = self.mean_shift(trimmed_outliers[:,:2])
-                        for i, label in enumerate(labels):
-                            # Grouping clusters of points
-                            cluster_dict[label].append(trimmed_outliers[i])
-                        if len(centers) != 0:
-                            for l, center in enumerate(centers):
-                                # Drawing arrows origin at cluster centers
-                                x, y = map(int, center)
-                                dx = 10*np.mean([pt[2] for pt in cluster_dict[l]]
-                                        ) - 10*avg_dx
-                                dy = 10*np.mean([pt[3] for pt in cluster_dict[l]]
-                                        ) - 10*avg_dy
-                                vel = np.sqrt(dx**2 + dy**2)/(1/self.fps)
-                                x1 = int(x + dx)
-                                y1 = int(y + dy)
-                                cv.arrowedLine(vis, (x, y), (x1, y1), (100, 255, 100), 5)
-                                if self.pause:
-                                    draw_str(vis, (x-20, y), "%.2fpx/s" % vel)
-                    trimmed_outliers = []    
+                self.cluster_outliers(inliers, outliers)
+                if True: #self.frame_counter % self.FRAME == 0:
                     outliers = []
-                    greens = []
-                draw_str(vis, (20, 20), 'track count: %d' % len(self.p1))
-                if self.use_ransac:
-                    draw_str(vis, (20, 40), 'RANSAC')
+                    inliers = []
+                draw_str(self.vis, (20, 20), 'track count: %d' % len(self.p1))
+                draw_str(self.vis, (20, 40), 'RANSAC')
                 self.i = 0
             else:
                 #temp = cv.Canny(frame_gray, 3500, 4500, apertureSize=5)
                 p = cv.goodFeaturesToTrack(frame_gray, **feature_params)
-                #cv.goodFeaturesToTrack(frame_gray, **feature_params)
-                if p is not None:
-                    for x, y in p[:,0]:
-                        cv.circle(vis, (x, y), 2, green, -1)
-                    draw_str(vis, (20, 20), 'feature count: %d' % len(p))
+                #if p is not None:
+                    #for x, y in p[:,0]:
+                        #cv.circle(self.vis, (x, y), 2, green, -1)
+                    #draw_str(self.vis, (20, 20), 'feature count: %d' % len(p))
 
-            cv.imshow('hockey_players', vis)
+            cv.imshow('Hockey Tracker', self.vis)
             #cv.waitKey(0)
 
             ch = cv.waitKey(1)
             if ch == 27:
                 break
-            if self.i == 0:
-                self.frame0 = self.frame.copy()
-                #temp = cv.Canny(frame_gray, 3500, 4500, apertureSize=5) 
-                self.p0 = cv.goodFeaturesToTrack(frame_gray, **feature_params)
-                if self.p0 is not None:
-                    self.p1 = self.p0
-                    self.gray0 = frame_gray
-                    self.gray1 = frame_gray
             if ch == ord(' '):
                 self.pause = not self.pause
+            if self.i == 0:
+                self.frame0 = self.frame.copy()
+                #temp = cv.Canny(frame_gray, 3500, 4500, apertureSize=5)
+                if not self.pause:
+                    self.p0 = cv.goodFeaturesToTrack(frame_gray, **feature_params)
+                if self.p0 is not None and not self.pause:
+                    self.p1 = self.p0
+                    self.prev_gray = frame_gray
             #time.sleep(0.333)
             self.i += 1
             self.frame_counter += 1
-                
+
+    def cluster_outliers(self, background, foreground):
+        trimmed_outliers = []
+        avg_dx = np.mean([pt[0] for pt in background])
+        avg_dy = np.mean([pt[1] for pt in background])
+        for pt in foreground:
+            h, w = self.mask.shape[:2]
+            x, y = map(int, pt[:2])
+            dx, dy = pt[2:]
+            y = h - 1 if y >= h else y
+            x = w - 1 if x >= w else x
+            # Checking to ensure each red point is within velocity threshold
+            # and that each point when placed in the mask is bright (>150)
+            if ((avg_dy - dy)**2 + (avg_dx - dx)**2) > self.VEL_THRESH \
+                    and sum(self.mask[y][x]) > self.BRIGHTNESS_THRESH:
+                cv.circle(self.vis, (x, y), 2, red, -1)
+                trimmed_outliers.append(pt)
+        print("Number of outliers trimmed: %s" % (len(foreground) - len(trimmed_outliers)))
+        if len(trimmed_outliers) > 5:
+            trimmed_outliers = np.array(trimmed_outliers)
+            cluster_dict = defaultdict(list)
+            # Creating clusters based on the trimmed outliers
+            number, centers, labels = self.mean_shift(trimmed_outliers[:, :2])
+            for i, label in enumerate(labels):
+                # Grouping clusters of points
+                cluster_dict[label].append(trimmed_outliers[i])
+            if len(centers) != 0:
+                for l, center in enumerate(centers):
+                    # Drawing arrows origin at cluster centers
+                    x, y = map(int, center)
+                    dx = 10*np.mean([pt[2] for pt in cluster_dict[l]]
+                                    ) - 10*avg_dx
+                    dy = 10*np.mean([pt[3] for pt in cluster_dict[l]]
+                                    ) - 10*avg_dy
+                    vel = np.sqrt(dx**2 + dy**2)/(1/self.fps)
+                    x1 = int(x + dx)
+                    y1 = int(y + dy)
+                    cv.arrowedLine(self.vis, (x, y), (x1, y1), (100, 255, 100), 5)
+                    if self.pause:
+                        draw_str(self.vis, (x-20, y), "%.2fpx/s" % vel)
+
+    def create_color_mask(self, frame_gray):
+        black = np.zeros((frame_gray.shape[0], frame_gray.shape[1], 3), np.uint8)
+        ret, thresh = cv.threshold(frame_gray, 140, 255, cv.THRESH_BINARY)
+        _, contours, hierarchy = cv.findContours(thresh, cv.RETR_EXTERNAL,
+                                                 cv.CHAIN_APPROX_NONE)
+        cv.drawContours(black, contours, -1, (255, 255, 255), thickness= -1)
+        #c = max(contours, key = cv.contourArea)
+        self.mask = cv.blur(black, (50, 50))
+        #plt.imshow(self.mask)
+        #plt.show()
+
     # #############################################################################
     # Compute clustering with MeanShift
     def mean_shift(self, points):
