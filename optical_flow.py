@@ -72,9 +72,10 @@ class App:
         self.frame_counter = 0
         self.frame = []
         self.pause = False
+        self.skip = False
         self.frame_offset = frame_offset
         # Squared pixels per-second delta allowed (CUSTOM)
-        self.VEL_THRESH = 0.0         
+        self.VEL_THRESH = 1.0         
         # RANSAC inlier/outlier threshold
         self.OUTLIER_THRESH = 2.0        
         # should be between [0, 1] 0.5 means that the median of all pairwise distances is used.
@@ -90,7 +91,7 @@ class App:
         outliers = []
         inliers = []
         while True:
-            if not self.pause:
+            if not self.pause or self.skip:
                 _ret, self.frame = self.cam.read()
             if _ret == False:
                 print("Exiting")
@@ -103,7 +104,7 @@ class App:
                 self.p1 = p2[trace_status].copy()
                 self.p0 = self.p0[trace_status].copy()
                 self.prev_gray = frame_gray
-
+                # Need at least 4 points for clustering
                 if len(self.p0) < 4:
                     self.p0 = None
                     continue
@@ -111,16 +112,14 @@ class App:
                         cv.RANSAC, self.OUTLIER_THRESH)
                 #overlay = cv.warpPerspective(self.frame0, H, (w, h))
                 #vis = cv.addWeighted(vis, 0.5, overlay, 0.5, 0.0)
-
                 for (x0, y0), (x1, y1), good in zip(self.p0[:,0], self.p1[:,0], status[:,0]):
                     dy = (y1 - y0)
                     dx = (x1 - x0)
-                    if good:
-                        if (dx**2 + dy**2) < 200:
-                            inliers.append(np.array([dx, dy]))
+                    # To throw away huge magnitudes have < 200
+                    if good and (dx**2 + dy**2) < 200:
+                        inliers.append(np.array([dx, dy]))
                         #cv.line(vis, (x0, y0), (x1, y1), (0, 128, 0))
-                    if not good:
-                        if (dx**2 + dy**2) < 200:
+                    if not good and (dx**2 + dy**2) < 200:
                             outliers.append(np.array([x1, y1, dx, dy]))
                         #cv.circle(black, (x1, y1), 2, (red, green)[good], -1)
                         #cv.circle(vis, (x1, y1), 2, (red, green)[good], -1)
@@ -138,10 +137,11 @@ class App:
                     #for x, y in p[:,0]:
                         #cv.circle(self.vis, (x, y), 2, green, -1)
                     #draw_str(self.vis, (20, 20), 'feature count: %d' % len(p))
-
-            cv.imshow('Hockey Tracker', self.vis)
+            try:
+                cv.imshow('Hockey Tracker', self.vis)
+            except cv.error:
+                pass
             #cv.waitKey(0)
-
             ch = cv.waitKey(1)
             if ch == 27:
                 break
@@ -150,9 +150,9 @@ class App:
             if self.i == 0:
                 self.frame0 = self.frame.copy()
                 #temp = cv.Canny(frame_gray, 3500, 4500, apertureSize=5)
-                if not self.pause:
+                if not self.pause or self.skip:
                     self.p0 = cv.goodFeaturesToTrack(frame_gray, **feature_params)
-                if self.p0 is not None and not self.pause:
+                if self.p0 is not None and not self.pause or self.skip:
                     self.p1 = self.p0
                     self.prev_gray = frame_gray
             #time.sleep(0.333)
@@ -177,6 +177,7 @@ class App:
                 trimmed_outliers.append(pt)
         print("Number of outliers trimmed: %s" % (len(foreground) - len(trimmed_outliers)))
         if len(trimmed_outliers) > 5:
+            self.skip = False
             trimmed_outliers = np.array(trimmed_outliers)
             cluster_dict = defaultdict(list)
             # Creating clusters based on the trimmed outliers
@@ -184,20 +185,34 @@ class App:
             for i, label in enumerate(labels):
                 # Grouping clusters of points
                 cluster_dict[label].append(trimmed_outliers[i])
-            if len(centers) != 0:
+            if len(centers) > 0:
                 for l, center in enumerate(centers):
                     # Drawing arrows origin at cluster centers
                     x, y = map(int, center)
-                    dx = 10*np.mean([pt[2] for pt in cluster_dict[l]]
-                                    ) - 10*avg_dx
-                    dy = 10*np.mean([pt[3] for pt in cluster_dict[l]]
-                                    ) - 10*avg_dy
+                    dx = np.mean([pt[2] for pt in cluster_dict[l]]
+                                    ) - avg_dx
+                    dy = np.mean([pt[3] for pt in cluster_dict[l]]
+                                    ) - avg_dy
                     vel = np.sqrt(dx**2 + dy**2)/(1/self.fps)
-                    x1 = int(x + dx)
-                    y1 = int(y + dy)
+                    try:
+                        x1 = int(x + 10*dx)
+                        y1 = int(y + 10*dy)
+                    except ValueError:
+                        x1 = x
+                        y1 = y
                     cv.arrowedLine(self.vis, (x, y), (x1, y1), (100, 255, 100), 5)
                     if self.pause:
-                        draw_str(self.vis, (x-20, y), "%.2fpx/s" % vel)
+                        self.draw_vel(self.vis, (x-50, y+20), "%.2fpx/s" % vel)
+        else:
+            self.skip = True 
+
+    def draw_vel(self, dst, target, s):
+        x, y = target
+        cv.putText(dst, s, (x+1, y+1), cv.FONT_HERSHEY_PLAIN, 
+                1.0, (0, 0, 0), thickness = 6, lineType=cv.LINE_AA)
+        cv.putText(dst, s, (x, y), cv.FONT_HERSHEY_PLAIN, 
+                1.0, (255, 255, 255), lineType=cv.LINE_AA)
+
 
     def create_color_mask(self, frame_gray):
         black = np.zeros((frame_gray.shape[0], frame_gray.shape[1], 3), np.uint8)
