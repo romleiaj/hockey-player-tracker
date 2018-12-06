@@ -61,6 +61,8 @@ class App:
     def __init__(self, video_src, frame_offset):
         ### Stream info ###
         self.cam = video.create_capture(video_src, presets['book'])
+        self.out = cv.VideoWriter('hockey_example.mp4', 
+                cv.VideoWriter_fourcc(*'mp4v'), 20.0, (1008, 416))
         self.video = os.path.basename(video_src).split('.')[0]
         self.fps = self.cam.get(cv.CAP_PROP_FPS)
         ### Shared images and feature points ###
@@ -73,6 +75,7 @@ class App:
         self.frame = []
         self.pause = False
         self.skip = False
+        self.total = []
         self.frame_offset = frame_offset
         # Squared pixels per-second delta allowed (CUSTOM)
         self.VEL_THRESH = 1.0         
@@ -91,6 +94,7 @@ class App:
         outliers = []
         inliers = []
         while True:
+            start = time.time()
             if not self.pause or self.skip:
                 _ret, self.frame = self.cam.read()
             if _ret == False:
@@ -121,8 +125,8 @@ class App:
                         #cv.line(vis, (x0, y0), (x1, y1), (0, 128, 0))
                     if not good and (dx**2 + dy**2) < 200:
                             outliers.append(np.array([x1, y1, dx, dy]))
-                        #cv.circle(black, (x1, y1), 2, (red, green)[good], -1)
-                        #cv.circle(vis, (x1, y1), 2, (red, green)[good], -1)
+                    #cv.circle(black, (x1, y1), 2, (red, green)[good], -1)
+                    #cv.circle(self.vis, (x1, y1), 2, (red, green)[good], -1)
                 self.cluster_outliers(inliers, outliers)
                 if True: #self.frame_counter % self.FRAME == 0:
                     outliers = []
@@ -139,9 +143,9 @@ class App:
                     #draw_str(self.vis, (20, 20), 'feature count: %d' % len(p))
             try:
                 cv.imshow('Hockey Tracker', self.vis)
+                self.out.write(self.vis)
             except cv.error:
                 pass
-            #cv.waitKey(0)
             ch = cv.waitKey(1)
             if ch == 27:
                 break
@@ -158,6 +162,7 @@ class App:
             #time.sleep(0.333)
             self.i += 1
             self.frame_counter += 1
+            self.total.append(time.time() - start)
 
     def cluster_outliers(self, background, foreground):
         trimmed_outliers = []
@@ -187,12 +192,14 @@ class App:
                 cluster_dict[label].append(trimmed_outliers[i])
             if len(centers) > 0:
                 for l, center in enumerate(centers):
+                    if len(cluster_dict[l]) < 5:
+                        continue
                     # Drawing arrows origin at cluster centers
                     x, y = map(int, center)
-                    dx = np.mean([pt[2] for pt in cluster_dict[l]]
-                                    ) - avg_dx
-                    dy = np.mean([pt[3] for pt in cluster_dict[l]]
-                                    ) - avg_dy
+                    all_x = [pt[2] for pt in cluster_dict[l]]
+                    all_y = [pt[3] for pt in cluster_dict[l]]
+                    dx = np.mean(all_x) - avg_dx
+                    dy = np.mean(all_y) - avg_dy
                     vel = np.sqrt(dx**2 + dy**2)/(1/self.fps)
                     try:
                         x1 = int(x + 10*dx)
@@ -264,6 +271,7 @@ def main():
         #writer.writerow(["Mag-Squared | Theta | x0 | y0 | x1 | y1 | outlier(0):inlier(1)"])
     app = App(video_src, frame_offset)
     app.run()
+    print("Avg FPS = %s" % (1/np.mean(app.total)))
     cv.destroyAllWindows()
 
 
