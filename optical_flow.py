@@ -246,7 +246,7 @@ def main():
         video_src = str(sys.argv[1])
     except:
         video_src = 0
-    video_src = "Womens_hockey.avi"
+    # video_src = "Womens_hockey.avi"
     # optional frame skip frame_offset = int(sys.argv[2])
     frame_offset = 0
 
