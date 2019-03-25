@@ -24,14 +24,10 @@ Space   -   Pause
 from __future__ import print_function
 
 import os
-import math
-import copy
-import csv
 import time
 import numpy as np
 import cv2 as cv
 import video
-import matplotlib.pyplot as plt
 from common import draw_str
 from video import presets
 from collections import defaultdict
@@ -114,18 +110,15 @@ class App:
                     continue
                 H, status = cv.findHomography(self.p0, self.p1,
                         cv.RANSAC, self.OUTLIER_THRESH)
-                #overlay = cv.warpPerspective(self.frame0, H, (w, h))
-                #vis = cv.addWeighted(vis, 0.5, overlay, 0.5, 0.0)
                 for (x0, y0), (x1, y1), good in zip(self.p0[:,0], self.p1[:,0], status[:,0]):
                     dy = (y1 - y0)
                     dx = (x1 - x0)
                     # To throw away huge magnitudes have < 200
                     if good and (dx**2 + dy**2) < 200:
                         inliers.append(np.array([dx, dy]))
-                        #cv.line(vis, (x0, y0), (x1, y1), (0, 128, 0))
                     if not good and (dx**2 + dy**2) < 200:
                             outliers.append(np.array([x1, y1, dx, dy]))
-                    #cv.circle(black, (x1, y1), 2, (red, green)[good], -1)
+                    # Can draw all features here
                     #cv.circle(self.vis, (x1, y1), 2, (red, green)[good], -1)
                 self.cluster_outliers(inliers, outliers)
                 if True: #self.frame_counter % self.FRAME == 0:
@@ -135,12 +128,7 @@ class App:
                 draw_str(self.vis, (20, 40), 'RANSAC')
                 self.i = 0
             else:
-                #temp = cv.Canny(frame_gray, 3500, 4500, apertureSize=5)
                 p = cv.goodFeaturesToTrack(frame_gray, **feature_params)
-                #if p is not None:
-                    #for x, y in p[:,0]:
-                        #cv.circle(self.vis, (x, y), 2, green, -1)
-                    #draw_str(self.vis, (20, 20), 'feature count: %d' % len(p))
             try:
                 cv.imshow('Hockey Tracker', self.vis)
                 self.out.write(self.vis)
@@ -153,19 +141,19 @@ class App:
                 self.pause = not self.pause
             if self.i == 0:
                 self.frame0 = self.frame.copy()
-                #temp = cv.Canny(frame_gray, 3500, 4500, apertureSize=5)
                 if not self.pause or self.skip:
+                    # Generate new features
                     self.p0 = cv.goodFeaturesToTrack(frame_gray, **feature_params)
                 if self.p0 is not None and not self.pause or self.skip:
                     self.p1 = self.p0
                     self.prev_gray = frame_gray
-            #time.sleep(0.333)
             self.i += 1
             self.frame_counter += 1
             self.total.append(time.time() - start)
 
     def cluster_outliers(self, background, foreground):
         trimmed_outliers = []
+        # Calculate background movement from camera motion
         avg_dx = np.mean([pt[0] for pt in background])
         avg_dy = np.mean([pt[1] for pt in background])
         for pt in foreground:
@@ -227,10 +215,7 @@ class App:
         _, contours, hierarchy = cv.findContours(thresh, cv.RETR_EXTERNAL,
                                                  cv.CHAIN_APPROX_NONE)
         cv.drawContours(black, contours, -1, (255, 255, 255), thickness= -1)
-        #c = max(contours, key = cv.contourArea)
         self.mask = cv.blur(black, (50, 50))
-        #plt.imshow(self.mask)
-        #plt.show()
 
     # #############################################################################
     # Compute clustering with MeanShift
@@ -238,10 +223,8 @@ class App:
         # The following bandwidth can be automatically detected using
         bandwidth = estimate_bandwidth(points, quantile=self.QUANTILE,
                                        n_samples=self.N_SAMPLES)
-        bandwidth += 0.01
-        #print(bandwidth)
-        #bandwidth = 5.0
-    
+        bandwidth += 0.01  # to ensure it's not 0
+
         ms = MeanShift(bandwidth=bandwidth,
                 bin_seeding=True, cluster_all=False)
         ms.fit(points)
@@ -263,9 +246,12 @@ def main():
         video_src = str(sys.argv[1])
     except:
         video_src = 0
-    frame_offset = int(sys.argv[2])
+    video_src = "Womens_hockey.avi"
+    # optional frame skip frame_offset = int(sys.argv[2])
+    frame_offset = 0
 
     print(__doc__)
+    # Optional data write out for external analysis
     #with open('mag2_and_theta.csv','w') as of:
         #writer= csv.writer(of)
         #writer.writerow(["Mag-Squared | Theta | x0 | y0 | x1 | y1 | outlier(0):inlier(1)"])
