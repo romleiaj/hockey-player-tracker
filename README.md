@@ -1,7 +1,7 @@
 # optical-flow
 ## EE422 Final Project - Hockey Player Tracker
 ![Visualization](data/overlayed_arrows.png)
-*Relative Speed and Position Estimates*
+*Relative Velocity and Position Estimates*
 ## Overview
 Uses the Lucas-Kanade sparse optical flow algorithm to calculate relative hockey player speed and position. 
 Uses feature tracking and back-tracking for match verification
