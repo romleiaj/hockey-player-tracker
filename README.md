@@ -1,5 +1,4 @@
-# optical-flow
-## EE422 Final Project - Hockey Player Tracker
+# EE422 Final Project - Hockey Player Tracker
 ![Visualization](data/overlayed_arrows.png)
 *Relative Velocity and Position Estimates*
 ## Overview
